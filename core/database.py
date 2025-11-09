@@ -1,73 +1,74 @@
-# =====================================
-# database.py — Match-based session model
-# =====================================
+import logging
 from pymongo import MongoClient
 from datetime import datetime
-import logging, atexit
+from threading import Lock
 
-# Silence PyMongo debug logs
-logging.getLogger("pymongo").setLevel(logging.WARNING)
+# --- Set up clean logging ---
+logger = logging.getLogger("MiniGameCollection.DB")
+logger.setLevel(logging.INFO)
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter("[DB] %(message)s"))
+logger.addHandler(console)
 
 
 class Database:
-    def __init__(self, uri="mongodb://localhost:27017/", db_name="mini_game_collection"):
+    """MongoDB handler with session-aware match tracking."""
+    _lock = Lock()
+
+    def __init__(self):
         try:
-            self.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-            self.db = self.client[db_name]
-            self.user_col = self.db["user"]
-            self.stats_col = self.db["match_history"]
-            self.settings_col = self.db["settings"]
-
-            self.init_defaults()
-            self.reset_session_data()  # clear matches on startup
-            atexit.register(self.reset_session_data)  # clear again when app closes
-
-            print("[DB] Connected successfully — session match tracking active.")
+            self.client = MongoClient(
+                "mongodb://localhost:27017/",
+                serverSelectionTimeoutMS=2000
+            )
+            self.db = self.client["mini_game_collection"]
+            self.stats = self.db["game_stats"]
+            self.client.admin.command("ping")
+            logger.info("Connected successfully to MongoDB.")
         except Exception as e:
-            print(f"[DB ERROR] Connection failed: {e}")
+            self.client = None
+            self.db = None
+            self.stats = None
+            logger.error(f"Connection failed: {e}")
 
-    # -----------------------------------------------------------
-    # Initialization
-    # -----------------------------------------------------------
-    def init_defaults(self):
-        if self.user_col.count_documents({}) == 0:
-            self.user_col.insert_one({
-                "_id": 1,
-                "username": "Player1",
-                "games_played": 0,
-                "total_matches": 0,
-                "last_login": datetime.now().isoformat()
-            })
-            print("[DB] Default user created.")
+    def clear_previous_session(self):
+        """Clears old matches from previous runs."""
+        if self.stats is None:
+            logger.warning("No DB collection initialized.")
+            return
+        try:
+            result = self.stats.delete_many({"session": "active"})
+            logger.info(f"Cleared {result.deleted_count} old matches (new session).")
+        except Exception as e:
+            logger.error(f"Session clear failed: {e}")
 
-        if self.settings_col.count_documents({}) == 0:
-            self.settings_col.insert_one({
-                "_id": 1,
-                "theme": "dark",
-                "sound": True,
-                "difficulty": "medium"
-            })
-            print("[DB] Default settings created.")
+    def record_match(self, game_name, result, duration):
+        """Insert a match record."""
+        if self.stats is None:
+            logger.warning("Skipping record — no DB connection.")
+            return
+        try:
+            with self._lock:
+                data = {
+                    "game_name": game_name,
+                    "result": result,
+                    "duration": str(duration),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "session": "active",
+                }
+                self.stats.insert_one(data)
+                logger.info(f"Recorded: {game_name} | {duration} | result={result}")
+        except Exception as e:
+            logger.error(f"Insert failed: {e}")
 
-    # -----------------------------------------------------------
-    # Session Reset
-    # -----------------------------------------------------------
-    def reset_session_data(self):
-        result = self.stats_col.delete_many({})
-        print(f"[DB] Cleared {result.deleted_count} old matches (new session).")
-
-    # -----------------------------------------------------------
-    # CRUD
-    # -----------------------------------------------------------
-    def record_match(self, game_name: str, winner: str, result: str):
-        doc = {
-            "game_name": game_name,
-            "winner": winner,
-            "result": result,
-            "timestamp": datetime.now().isoformat()
-        }
-        self.stats_col.insert_one(doc)
-        print(f"[DB] Recorded match: {game_name} | {result} | winner={winner}")
-
-    def get_matches(self):
-        return list(self.stats_col.find({}).sort("timestamp", -1))
+    def get_recent_stats(self, limit=10):
+        """Fetch recent stats safely."""
+        if self.stats is None:
+            logger.warning("No DB connection for fetching stats.")
+            return []
+        try:
+            with self._lock:
+                return list(self.stats.find().sort("timestamp", -1).limit(limit))
+        except Exception as e:
+            logger.error(f"Fetch failed: {e}")
+            return []
