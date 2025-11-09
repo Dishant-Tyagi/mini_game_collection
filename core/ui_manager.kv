@@ -1,0 +1,66 @@
+#:kivy 2.3.0
+
+<MenuScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 15
+
+        Label:
+            text: "Mini Game Collection"
+            font_size: 28
+            size_hint_y: None
+            height: 60
+
+        ScrollView:
+            GridLayout:
+                id: game_list
+                cols: 1
+                spacing: 10
+                size_hint_y: None
+                height: self.minimum_height
+
+        Button:
+            text: "View Stats"
+            size_hint_y: None
+            height: 50
+            on_release: app.switch_to("stats")
+
+        Button:
+            text: "Exit"
+            size_hint_y: None
+            height: 50
+            on_release: app.stop()
+
+
+<GameScreen>:
+    BoxLayout:
+        id: game_box
+        orientation: "vertical"
+
+
+<StatsScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 10
+
+        Label:
+            text: "Match History"
+            font_size: 24
+            size_hint_y: None
+            height: 50
+
+        ScrollView:
+            GridLayout:
+                id: stats_list
+                cols: 1
+                spacing: 5
+                size_hint_y: None
+                height: self.minimum_height
+
+        Button:
+            text: "Back to Menu"
+            size_hint_y: None
+            height: 50
+            on_release: app.switch_to("menu")
