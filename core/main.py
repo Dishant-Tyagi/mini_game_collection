@@ -1,3 +1,4 @@
+#python -m core.main
 import os
 import logging
 from kivy.app import App
