@@ -1,3 +1,5 @@
+# net start mongodb          
+
 import logging
 from pymongo import MongoClient
 from datetime import datetime

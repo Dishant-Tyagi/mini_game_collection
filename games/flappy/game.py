@@ -1,16 +1,28 @@
-# games/flappy/game.py
-from core.base_game import BaseGame
+# =====================================
+# games/flappy/game.py  —  Fixed & EXE-ready
+# =====================================
+import os, sys, time
+from random import randint
+from kivy.clock import Clock
 from kivy.uix.widget import Widget
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.clock import Clock
+from kivy.uix.popup import Popup
 from kivy.graphics import Rectangle
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
-from kivy.uix.popup import Popup
-from random import randint
-import time
+from core.base_game import BaseGame
+
+
+# ---------- Safe path resolver ----------
+def resource_path(relative_path: str) -> str:
+    """Return absolute path for both dev and PyInstaller EXE."""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 
 class FlappyGame(BaseGame):
@@ -21,23 +33,20 @@ class FlappyGame(BaseGame):
         self.play_area = None
         self.layout = None
         self.score_label = None
-        self.bg_img = None
-        self.pipe_img = None
-        self.bird_img = None
         self.pipes = []
 
         # physics
-        self.gravity = -850.0
+        self.gravity = -700.0
         self.jump_velocity = 320.0
         self.bird_y = 0.0
         self.bird_vy = 0.0
 
         # pipes
-        self.pipe_speed = 200.0
-        self.pipe_gap = 180
+        self.pipe_speed = 170.0
+        self.pipe_gap = 160
         self.pipe_width = 80
         self.pipe_spawn_timer = 0.0
-        self.pipe_interval = 1.5
+        self.pipe_interval = 1.9
 
         # score
         self.score = 0
@@ -45,14 +54,13 @@ class FlappyGame(BaseGame):
         self.start_time = None
         self._clock_ev = None
 
-        # assets
-        self.asset_path = "games/flappy/assets/"
-        self.bg_img = CoreImage(self.asset_path + "background.png").texture
-        self.pipe_img = CoreImage(self.asset_path + "pipe.png").texture
-        self.bird_img = CoreImage(self.asset_path + "bird.png").texture
+        # ---------- Load assets safely ----------
+        self.bg_img = CoreImage(resource_path("games/flappy/assets/background.png")).texture
+        self.pipe_img = CoreImage(resource_path("games/flappy/assets/pipe.png")).texture
+        self.bird_img = CoreImage(resource_path("games/flappy/assets/bird.png")).texture
 
     # ------------------------------------------------------
-    def start(self):
+    def start(self, app):
         from kivy.app import App
         app = App.get_running_app()
         self.begin_session()
@@ -67,19 +75,14 @@ class FlappyGame(BaseGame):
         self.layout = BoxLayout(orientation="vertical", spacing=0, padding=0)
 
         # Score label
-        self.score_label = Label(
-            text="Score: 0",
-            font_size=28,
-            size_hint_y=None,
-            height=50
-        )
+        self.score_label = Label(text="Score: 0", font_size=28, size_hint_y=None, height=50)
         self.layout.add_widget(self.score_label)
 
-        # Play area — takes 85% of height
+        # Play area
         self.play_area = Widget(size_hint_y=0.85)
         self.layout.add_widget(self.play_area)
 
-        # Bottom button bar
+        # Buttons
         btns = BoxLayout(size_hint_y=0.15, height=60, spacing=10, padding=[10, 6])
         btns.add_widget(Button(text="Restart", on_release=lambda x: self.reset()))
         btns.add_widget(Button(text="Back to Menu", on_release=lambda x: app.switch_to("menu")))
@@ -107,7 +110,7 @@ class FlappyGame(BaseGame):
         self.update_canvas()
 
     def _on_key_down(self, instance, key, scancode, codepoint, modifiers):
-        if key == 32 and self.running:  # Space key
+        if key == 32 and self.running:  # Space
             self.bird_vy = self.jump_velocity
 
     def _on_resize(self):
@@ -118,11 +121,11 @@ class FlappyGame(BaseGame):
         if not self.running:
             return
 
-        # Update physics
+        # Physics
         self.bird_vy += self.gravity * dt
         self.bird_y += self.bird_vy * dt
 
-        # Spawn new pipes
+        # Spawn pipes
         self.pipe_spawn_timer += dt
         if self.pipe_spawn_timer >= self.pipe_interval:
             self.pipe_spawn_timer = 0
@@ -133,18 +136,13 @@ class FlappyGame(BaseGame):
             p["x"] -= self.pipe_speed * dt
         self.pipes = [p for p in self.pipes if p["x"] + self.pipe_width > 0]
 
-        # Check collisions & scoring
         self._check_collisions()
         self.update_canvas()
 
     def _spawn_pipe(self):
-        h = self.play_area.height or 600
-        gap_y = randint(int(h * 0.3), int(h * 0.7))
-        self.pipes.append({
-            "x": self.play_area.width,
-            "gap_y": gap_y,
-            "passed": False
-        })
+        h = self.play_area.height or 300
+        gap_y = randint(int(h * 0.3), int(h * 0.8))
+        self.pipes.append({"x": self.play_area.width, "gap_y": gap_y, "passed": False})
 
     def _check_collisions(self):
         h = self.play_area.height or 600
@@ -152,7 +150,7 @@ class FlappyGame(BaseGame):
         bird_size = 40
         bx = w * 0.25
         by = self.bird_y
-        COLLISION_OFFSET = 12  # reduced hitbox padding
+        COLLISION_OFFSET = 12
 
         # Ground / ceiling
         if by < 0 or by + bird_size > h:
@@ -162,14 +160,10 @@ class FlappyGame(BaseGame):
         for p in self.pipes:
             px = p["x"]
             gap_y = p["gap_y"]
-
-            # Collision detection
             if bx + bird_size - COLLISION_OFFSET > px and bx + COLLISION_OFFSET < px + self.pipe_width:
                 if by + COLLISION_OFFSET < gap_y - self.pipe_gap / 2 or by + bird_size - COLLISION_OFFSET > gap_y + self.pipe_gap / 2:
                     self._game_over()
                     return
-
-            # Scoring
             if not p["passed"] and px + self.pipe_width < bx:
                 p["passed"] = True
                 self.score += 1
@@ -187,8 +181,6 @@ class FlappyGame(BaseGame):
         try:
             if hasattr(self.db, "record_match"):
                 self.db.record_match(self.game_name, self.score, duration)
-            else:
-                self.db.insert_game_stat(self.game_name, self.score, duration)
         except Exception:
             pass
 
@@ -214,36 +206,18 @@ class FlappyGame(BaseGame):
     def update_canvas(self):
         self.play_area.canvas.clear()
         with self.play_area.canvas:
-        # Background — fill only the play area (not the buttons below)
-            Rectangle(
-                texture=self.bg_img,
-                pos=self.play_area.pos,
-                size=self.play_area.size
-            )
+            Rectangle(texture=self.bg_img, pos=self.play_area.pos, size=self.play_area.size)
 
-        # Draw pipes
             for p in self.pipes:
                 px = p["x"]
                 gap_y = p["gap_y"]
+                Rectangle(texture=self.pipe_img,
+                          pos=(px, self.play_area.y + gap_y + self.pipe_gap / 2),
+                          size=(self.pipe_width, self.play_area.height - (gap_y + self.pipe_gap / 2)))
+                Rectangle(texture=self.pipe_img,
+                          pos=(px, self.play_area.y),
+                          size=(self.pipe_width, gap_y - self.pipe_gap / 2))
 
-            # Top pipe
-                Rectangle(
-                    texture=self.pipe_img,
-                    pos=(px, self.play_area.y + gap_y + self.pipe_gap / 2),
-                    size=(self.pipe_width, self.play_area.height - (gap_y + self.pipe_gap / 2))
-                )
-
-            # Bottom pipe
-                Rectangle(
-                    texture=self.pipe_img,
-                    pos=(px, self.play_area.y),
-                    size=(self.pipe_width, gap_y - self.pipe_gap / 2)
-                )
-
-        # Bird
-            bird_x = self.play_area.width * 0.25
-            Rectangle(
-                texture=self.bird_img,
-                pos=(bird_x, self.play_area.y + self.bird_y),
-                size=(40, 40)
-            )
+            Rectangle(texture=self.bird_img,
+                      pos=(self.play_area.width * 0.25, self.play_area.y + self.bird_y),
+                      size=(40, 40))

@@ -1,365 +1,367 @@
-import os
-import time
-import copy
-from kivy.uix.gridlayout import GridLayout
-from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
-from kivy.uix.label import Label
-from kivy.uix.popup import Popup
+# =====================================
+# Chess — Clean Professional UI
+# =====================================
+import logging
 from kivy.core.window import Window
-from kivy.graphics import Rectangle
 from kivy.utils import get_color_from_hex
+
+# ------------------ LOGGING CLEANUP ------------------
+logging.getLogger("pymongo").setLevel(logging.WARNING)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+logging.getLogger("kivy").setLevel(logging.WARNING)
+Window.clearcolor = get_color_from_hex("#10121A")
+
 from core.base_game import BaseGame
-
-
-# Board colors
-LIGHT = get_color_from_hex("#EEEED2")
-DARK = get_color_from_hex("#769656")
-HIGHLIGHT = get_color_from_hex("#f7ec8b")
+from kivy.uix.widget import Widget
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.graphics import Color, Rectangle
+from kivy.core.image import Image as CoreImage
 
 
 class ChessGame(BaseGame):
-    GAME_NAME = "Chess"
+
+    BOARD_SIZE = 8
 
     def __init__(self, db):
-        super().__init__(db, self.GAME_NAME)
-        self.board = []
-        self.buttons = []
+        super().__init__(db, "Chess")
+
+        self.app = None
+        self.board_widget = None
         self.selected = None
-        self.legal_moves = []
-        self.turn = "w"
-        self.root_layout = None
-        self.grid = None
-        self.top_label = None
-        self.start_time = None
-        self.running = False
+        self.valid_moves = []
+        self.current_player = "w"
 
-        # Automatically detect asset path
-        self.asset_path = os.path.join(os.path.dirname(__file__), "assets") + os.sep
+        self.piece_cache = {}
 
-    # ---------------------- INIT & SETUP ----------------------
-    def start(self):
-        from kivy.app import App
-        app = App.get_running_app()
+    # --------------------------------------------------
+    # Lifecycle
+    # --------------------------------------------------
+    def start(self, app):
+        self.app = app
         self.begin_session()
-        self.build_ui(app)
+        self.build_ui()
         self.reset()
 
     def reset(self):
-        self._init_board()
+        self.init_board()
         self.selected = None
-        self.legal_moves = []
-        self.turn = "w"
-        self.start_time = time.time()
-        self.running = True
-        self._render_board()
-        self._update_top_label()
+        self.valid_moves = []
+        self.current_player = "w"
+        self.draw_board()
 
-    def get_score(self):
-        return f"{self.turn} to move"
-
-    def _init_board(self):
-        self.board = [
-            ["bR", "bN", "bB", "bQ", "bK", "bB", "bN", "bR"],
-            ["bP"] * 8,
-            ["--"] * 8,
-            ["--"] * 8,
-            ["--"] * 8,
-            ["--"] * 8,
-            ["wP"] * 8,
-            ["wR", "wN", "wB", "wQ", "wK", "wB", "wN", "wR"],
-        ]
-
-    # ---------------------- UI ----------------------
-    def build_ui(self, app):
-        screen = app.game_screen
+    # --------------------------------------------------
+    # UI
+    # --------------------------------------------------
+    def build_ui(self):
+        screen = self.app.game_screen
         screen.clear_widgets()
 
-        self.root_layout = BoxLayout(orientation="vertical", spacing=6, padding=6)
-        self.top_label = Label(text="White to move", font_size=22, size_hint_y=None, height=44)
-        self.root_layout.add_widget(self.top_label)
+        root = BoxLayout(orientation="vertical", spacing=0, padding=0)
 
-        # Board
-        self.grid = GridLayout(cols=8, rows=8)
-        self.buttons = []
-        for r in range(8):
-            row_buttons = []
-            for c in range(8):
-                b = Button(on_release=lambda inst, rr=r, cc=c: self._on_square(rr, cc))
-                b.background_normal = ''
-                b.background_color = LIGHT if (r + c) % 2 == 0 else DARK
-                row_buttons.append(b)
-                self.grid.add_widget(b)
-            self.buttons.append(row_buttons)
+        self.turn_label = Label(
+            text="White Turn",
+            size_hint_y=None,
+            height=50,
+            font_size=22
+        )
+        root.add_widget(self.turn_label)
 
-        self.root_layout.add_widget(self.grid)
+        self.board_widget = Widget()
+        root.add_widget(self.board_widget)
 
-        # Controls
-        bottom = BoxLayout(size_hint_y=None, height=56, spacing=10, padding=[8, 6])
-        bottom.add_widget(Button(text="Restart", on_release=lambda x: self.reset()))
-        bottom.add_widget(Button(text="Back to Menu", on_release=lambda x: app.switch_to("menu")))
-        self.root_layout.add_widget(bottom)
+        btns = BoxLayout(size_hint_y=None, height=50)
+        btns.add_widget(Button(text="Restart", on_release=lambda *_: self.reset()))
+        btns.add_widget(Button(text="Menu", on_release=lambda *_: self.app.switch_to("menu")))
+        root.add_widget(btns)
 
-        screen.add_widget(self.root_layout)
-        app.switch_to("game")
+        screen.add_widget(root)
+        self.app.switch_to("game")
 
-        Window.bind(on_key_down=self._on_key_down)
+        self.board_widget.bind(on_touch_down=self.on_touch)
+        self.board_widget.bind(size=lambda *_: self.draw_board())
 
-    def _on_key_down(self, instance, key, scancode, codepoint, modifiers):
-        if codepoint and codepoint.lower() == "r":
-            self.reset()
+    # --------------------------------------------------
+    # Board Setup
+    # --------------------------------------------------
+    def init_board(self):
+        self.multiplayer_enabled = False
+        self.local_player_color = "w"   # default
+        self.input_locked = False
 
-    # ---------------------- INPUT ----------------------
-    def _on_square(self, r, c):
-        if not self.running:
+        self.board = [
+            ["bR","bN","bB","bQ","bK","bB","bN","bR"],
+            ["bP"]*8,
+            [""]*8,
+            [""]*8,
+            [""]*8,
+            [""]*8,
+            ["wP"]*8,
+            ["wR","wN","wB","wQ","wK","wB","wN","wR"],
+        ]
+
+    # --------------------------------------------------
+    # Drawing (Perfect Square + Clean)
+    # --------------------------------------------------
+    def draw_board(self):
+        self.board_widget.canvas.clear()
+
+        w = self.board_widget.width
+        h = self.board_widget.height
+
+        board_size = min(w, h)
+        cell = board_size / 8
+
+        offset_x = self.board_widget.x + (w - board_size) / 2
+        offset_y = self.board_widget.y + (h - board_size) / 2
+
+        with self.board_widget.canvas:
+
+            for r in range(8):
+                for c in range(8):
+
+                    x = offset_x + c * cell
+                    y = offset_y + r * cell
+
+                    # Modern soft theme
+                    if (r + c) % 2 == 0:
+                        Color(0.92, 0.92, 0.92)
+                    else:
+                        Color(0.35, 0.45, 0.55)
+
+                    Rectangle(pos=(x, y), size=(cell, cell))
+
+                    # Selected highlight
+                    if self.selected == (r, c):
+                        Color(0, 0.6, 1, 0.4)
+                        Rectangle(pos=(x, y), size=(cell, cell))
+
+                    # Valid move highlight
+                    if (r, c) in self.valid_moves:
+                        Color(0, 1, 0, 0.3)
+                        Rectangle(pos=(x, y), size=(cell, cell))
+
+                    piece = self.board[r][c]
+                    if piece:
+                        texture = self.get_piece_texture(piece)
+                        Rectangle(
+                            texture=texture,
+                            pos=(x + cell*0.1, y + cell*0.1),
+                            size=(cell*0.8, cell*0.8)
+                        )
+
+    # --------------------------------------------------
+    # Piece Texture Cache
+    # --------------------------------------------------
+    def get_piece_texture(self, piece):
+        if piece in self.piece_cache:
+            return self.piece_cache[piece]
+
+        path = f"games/chess/assets/{piece}.png"
+        texture = CoreImage(path).texture
+        self.piece_cache[piece] = texture
+        return texture
+
+    # --------------------------------------------------
+    # Input
+    # --------------------------------------------------
+    def on_touch(self, widget, touch):
+        if self.input_locked:
             return
-        piece = self.board[r][c]
-        piece_color = piece[0] if piece != "--" else None
+        if self.multiplayer_enabled:
+            if self.current_player != self.local_player_color:
+                return
 
-        if self.selected is None:
-            if piece != "--" and piece_color == self.turn:
-                self.selected = (r, c)
-                self.legal_moves = self._generate_legal_moves_for_piece(r, c)
-                self._highlight_selection()
+        if not widget.collide_point(*touch.pos):
             return
 
-        if self.selected == (r, c):
-            self.selected = None
-            self.legal_moves = []
-            self._render_board()
+        w = widget.width
+        h = widget.height
+        board_size = min(w, h)
+        cell = board_size / 8
+
+        offset_x = widget.x + (w - board_size) / 2
+        offset_y = widget.y + (h - board_size) / 2
+
+        col = int((touch.x - offset_x) / cell)
+        row = int((touch.y - offset_y) / cell)
+
+        if not (0 <= row < 8 and 0 <= col < 8):
             return
 
-        if (r, c) in self.legal_moves:
-            self._make_move(self.selected, (r, c))
-            self.selected = None
-            self.legal_moves = []
-            self._render_board()
-            return
+        piece = self.board[row][col]
 
-        if piece != "--" and piece_color == self.turn:
-            self.selected = (r, c)
-            self.legal_moves = self._generate_legal_moves_for_piece(r, c)
-            self._highlight_selection()
-
-    # ---------------------- RENDER ----------------------
-    def _render_board(self):
-        """Render chessboard with visible piece images."""
-        for r in range(8):
-            for c in range(8):
-                b = self.buttons[r][c]
-                piece = self.board[r][c]
-
-            # Clear previous drawing layers
-                b.canvas.after.clear()
-                b.background_normal = ''
-                b.background_down = ''
-                b.background_color = LIGHT if (r + c) % 2 == 0 else DARK
-                b.text = ""
-
-                if piece != "--":
-                    img_path = os.path.join(self.asset_path, f"{piece}.png")
-                    if os.path.exists(img_path):
-                        with b.canvas.after:
-                            rect = Rectangle(source=img_path, pos=b.pos, size=b.size)
-
-                    # Keep rectangle in sync with layout
-                        def update_rect(instance, value, rect=rect):
-                            rect.pos = instance.pos
-                            rect.size = instance.size
-
-                        b.bind(pos=update_rect, size=update_rect)
-        self._update_top_label()
-
-
-    def _highlight_selection(self):
-        self._render_board()
         if self.selected:
-            r, c = self.selected
-            self.buttons[r][c].background_color = HIGHLIGHT
-        for (mr, mc) in self.legal_moves:
-            self.buttons[mr][mc].background_color = [0.2, 0.65, 0.2, 1]
+            if (row, col) in self.valid_moves:
+                self.move_piece(self.selected, (row, col))
+                self.switch_turn()
+            self.selected = None
+            self.valid_moves = []
+            self.draw_board()
 
-    def _update_top_label(self):
-        self.top_label.text = "White to move" if self.turn == "w" else "Black to move"
+        elif piece and piece[0] == self.current_player:
+            self.selected = (row, col)
+            self.valid_moves = self.get_valid_moves(row, col)
+            self.draw_board()
+        
 
-    # ---------------------- GAME LOGIC ----------------------
-    def _make_move(self, src, dst):
-        sr, sc = src
-        dr, dc = dst
-        moving = self.board[sr][sc]
-        self.board[dr][dc] = moving
-        self.board[sr][sc] = "--"
 
-        # Pawn promotion
-        if moving[1] == "P":
-            if (moving[0] == "w" and dr == 0) or (moving[0] == "b" and dr == 7):
-                self.board[dr][dc] = moving[0] + "Q"
+    # --------------------------------------------------
+    # Minimal Move Logic Hook
+    # (Keep your existing logic if already implemented)
+    # --------------------------------------------------
+    def get_valid_moves(self, r, c):
+        return []  # Keep your existing logic
 
-        self.turn = "b" if self.turn == "w" else "w"
-        self._update_top_label()
+    def move_piece(self, start, end):
+        sr, sc = start
+        er, ec = end
+        self.board[er][ec] = self.board[sr][sc]
+        self.board[sr][sc] = ""
 
-        if not self._player_has_any_legal_moves(self.turn):
-            if self._is_in_check(self.turn):
-                winner = "White" if self.turn == "b" else "Black"
-                self._end_game(f"{winner} wins by checkmate")
-            else:
-                self._end_game("Draw by stalemate")
+    def switch_turn(self):
+        self.current_player = "b" if self.current_player == "w" else "w"
+        self.turn_label.text = "White Turn" if self.current_player == "w" else "Black Turn"
+        
+    def is_in_bounds(self, r, c):
+        return 0 <= r < 8 and 0 <= c < 8
 
-    def _end_game(self, result_text):
-        self.running = False
-        duration = int(time.time() - (self.start_time or time.time()))
-        duration_str = f"{duration // 60:02d}:{duration % 60:02d}"
-        try:
-            if hasattr(self.db, "record_match"):
-                self.db.record_match(self.game_name, result_text, duration_str)
-            else:
-                self.db.insert_game_stat(self.game_name, result_text, duration_str)
-        except Exception:
-            pass
-        from kivy.app import App
-        app = App.get_running_app()
-        box = BoxLayout(orientation="vertical", spacing=10, padding=10)
-        box.add_widget(Label(text=result_text, halign="center"))
-        btns = BoxLayout(size_hint_y=None, height=40, spacing=10)
-        r = Button(text="Restart")
-        r.bind(on_release=lambda *_: (popup.dismiss(), self.reset()))
-        m = Button(text="Menu")
-        m.bind(on_release=lambda *_: (popup.dismiss(), app.switch_to("menu")))
-        btns.add_widget(r)
-        btns.add_widget(m)
-        box.add_widget(btns)
-        popup = Popup(title="Game Over", content=box, size_hint=(0.5, 0.4))
-        popup.open()
 
-    # ---------------------- MOVE GENERATION ----------------------
-    def _generate_legal_moves_for_piece(self, r, c):
+    def is_enemy(self, piece):
+        return piece and piece[0] != self.current_player
+
+
+    def is_friend(self, piece):
+        return piece and piece[0] == self.current_player
+
+    def get_valid_moves(self, r, c):
         piece = self.board[r][c]
-        if piece == "--":
+        if not piece:
             return []
-        color = piece[0]
-        pseudo = self._generate_pseudo_moves(r, c, piece)
-        legal = []
-        for (dr, dc) in pseudo:
-            b2 = copy.deepcopy(self.board)
-            b2[dr][dc], b2[r][c] = b2[r][c], "--"
-            if not self._is_in_check_for_board(b2, color):
-                legal.append((dr, dc))
-        return legal
 
-    def _generate_pseudo_moves(self, r, c, piece):
-        t, color, moves = piece[1], piece[0], []
-        if t == "P":
-            f = -1 if color == "w" else 1
-            s = 6 if color == "w" else 1
-            if 0 <= r + f < 8 and self.board[r + f][c] == "--":
-                moves.append((r + f, c))
-                if r == s and self.board[r + 2 * f][c] == "--":
-                    moves.append((r + 2 * f, c))
-            for dc in (-1, 1):
-                nr, nc = r + f, c + dc
-                if 0 <= nr < 8 and 0 <= nc < 8:
-                    target = self.board[nr][nc]
-                    if target != "--" and target[0] != color:
+        raw_moves = self.get_raw_moves(r, c, piece)
+
+        legal_moves = []
+        for move in raw_moves:
+            if not self.would_cause_check((r, c), move):
+                legal_moves.append(move)
+
+        return legal_moves
+    def would_cause_check(self, start, end):
+        temp = [row[:] for row in self.board]
+
+        sr, sc = start
+        er, ec = end
+
+        temp[er][ec] = temp[sr][sc]
+        temp[sr][sc] = ""
+
+        return self.is_in_check(self.current_player, temp)
+    
+    def is_in_check(self, color, board):
+        king_pos = None
+
+        for r in range(8):
+            for c in range(8):
+                if board[r][c] == color + "K":
+                    king_pos = (r, c)
+                    break
+
+        enemy = "b" if color == "w" else "w"
+
+        for r in range(8):
+            for c in range(8):
+                piece = board[r][c]
+                if piece and piece[0] == enemy:
+                    moves = self.get_raw_moves(r, c, piece, board_override=board)
+                    if king_pos in moves:
+                        return True
+
+        return False
+    
+    def get_raw_moves(self, r, c, piece, board_override=None):
+        board = board_override if board_override else self.board
+        color = piece[0]
+        p = piece[1]
+        moves = []
+
+        directions = []
+
+        if p == "P":
+            direction = -1 if color == "w" else 1
+            if self.is_in_bounds(r + direction, c) and not board[r + direction][c]:
+                moves.append((r + direction, c))
+
+            for dc in [-1, 1]:
+                nr, nc = r + direction, c + dc
+                if self.is_in_bounds(nr, nc):
+                    if board[nr][nc] and board[nr][nc][0] != color:
+                        moves.append((nr, nc))
+
+        elif p == "R":
+            directions = [(1,0),(-1,0),(0,1),(0,-1)]
+
+        elif p == "B":
+            directions = [(1,1),(1,-1),(-1,1),(-1,-1)]
+
+        elif p == "Q":
+            directions = [(1,0),(-1,0),(0,1),(0,-1),
+                        (1,1),(1,-1),(-1,1),(-1,-1)]
+
+        elif p == "N":
+            jumps = [(2,1),(2,-1),(-2,1),(-2,-1),
+                    (1,2),(1,-2),(-1,2),(-1,-2)]
+            for dr, dc in jumps:
+                nr, nc = r + dr, c + dc
+                if self.is_in_bounds(nr, nc):
+                    if not board[nr][nc] or board[nr][nc][0] != color:
                         moves.append((nr, nc))
             return moves
-        if t == "N":
-            for dr, dc in [(2,1),(2,-1),(-2,1),(-2,-1),(1,2),(1,-2),(-1,2),(-1,-2)]:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < 8 and 0 <= nc < 8 and (self.board[nr][nc] == "--" or self.board[nr][nc][0] != color):
-                    moves.append((nr, nc))
-            return moves
-        if t == "K":
-            for dr in (-1,0,1):
-                for dc in (-1,0,1):
-                    if dr or dc:
-                        nr, nc = r + dr, c + dc
-                        if 0 <= nr < 8 and 0 <= nc < 8 and (self.board[nr][nc] == "--" or self.board[nr][nc][0] != color):
+
+        elif p == "K":
+            for dr in [-1,0,1]:
+                for dc in [-1,0,1]:
+                    if dr == 0 and dc == 0:
+                        continue
+                    nr, nc = r + dr, c + dc
+                    if self.is_in_bounds(nr, nc):
+                        if not board[nr][nc] or board[nr][nc][0] != color:
                             moves.append((nr, nc))
             return moves
-        dirs = []
-        if t == "R": dirs = [(-1,0),(1,0),(0,-1),(0,1)]
-        if t == "B": dirs = [(-1,-1),(-1,1),(1,-1),(1,1)]
-        if t == "Q": dirs = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]
-        for dr, dc in dirs:
+
+    # Sliding pieces
+        for dr, dc in directions:
             nr, nc = r + dr, c + dc
-            while 0 <= nr < 8 and 0 <= nc < 8:
-                t2 = self.board[nr][nc]
-                if t2 == "--":
+            while self.is_in_bounds(nr, nc):
+                if not board[nr][nc]:
                     moves.append((nr, nc))
                 else:
-                    if t2[0] != color:
+                    if board[nr][nc][0] != color:
                         moves.append((nr, nc))
-                    break
-                nr += dr; nc += dc
-        return moves
-
-    def _is_in_check(self, color):
-        return self._is_in_check_for_board(self.board, color)
-
-    def _is_in_check_for_board(self, b, color):
-        king, pos = color + "K", None
-        for r in range(8):
-            for c in range(8):
-                if b[r][c] == king:
-                    pos = (r, c)
-                    break
-            if pos: break
-        if not pos:
-            return True
-        opp = "b" if color == "w" else "w"
-        for r in range(8):
-            for c in range(8):
-                p = b[r][c]
-                if p != "--" and p[0] == opp:
-                    if pos in self._pseudo_moves_for_board(b, r, c):
-                        return True
-        return False
-
-    def _pseudo_moves_for_board(self, b, r, c):
-        p = b[r][c]
-        if p == "--":
-            return []
-        t, color, moves = p[1], p[0], []
-        if t == "P":
-            f = -1 if color == "w" else 1
-            for dc in (-1, 1):
-                nr, nc = r + f, c + dc
-                if 0 <= nr < 8 and 0 <= nc < 8:
-                    moves.append((nr, nc))
-            return moves
-        if t == "N":
-            for dr, dc in [(2,1),(2,-1),(-2,1),(-2,-1),(1,2),(1,-2),(-1,2),(-1,-2)]:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < 8 and 0 <= nc < 8:
-                    moves.append((nr, nc))
-            return moves
-        if t == "K":
-            for dr in (-1,0,1):
-                for dc in (-1,0,1):
-                    if dr or dc:
-                        nr, nc = r + dr, c + dc
-                        if 0 <= nr < 8 and 0 <= nc < 8:
-                            moves.append((nr, nc))
-            return moves
-        dirs = []
-        if t == "R": dirs = [(-1,0),(1,0),(0,-1),(0,1)]
-        if t == "B": dirs = [(-1,-1),(-1,1),(1,-1),(1,1)]
-        if t == "Q": dirs = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]
-        for dr, dc in dirs:
-            nr, nc = r + dr, c + dc
-            while 0 <= nr < 8 and 0 <= nc < 8:
-                moves.append((nr, nc))
-                if b[nr][nc] != "--":
                     break
                 nr += dr
                 nc += dc
-        return moves
 
-    def _player_has_any_legal_moves(self, color):
-        for r in range(8):
-            for c in range(8):
-                p = self.board[r][c]
-                if p != "--" and p[0] == color:
-                    if self._generate_legal_moves_for_piece(r, c):
-                        return True
-        return False
+        return moves
+    def serialize_move(self, start, end):
+        return {
+            "type": "move",
+            "from": start,
+            "to": end,
+            "player": self.current_player
+        }
+    def apply_remote_move(self, move_data):
+        start = tuple(move_data["from"])
+        end = tuple(move_data["to"])
+
+        self.move_piece(start, end)
+        self.switch_turn()
+
+        self.input_locked = False
+        self.draw_board()
+
+
+
+
+

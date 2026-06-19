@@ -1,0 +1,118 @@
+#:import MDFillRoundFlatButton kivymd.uix.button.MDFillRoundFlatButton
+#:import MDCard kivymd.uix.card.MDCard
+#:import MDLabel kivymd.uix.label.MDLabel
+
+<MenuScreen>:
+    name: "menu"
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.05, 0.07, 0.1, 1  # Dark background
+        spacing: "20dp"
+        padding: "40dp"
+
+        MDLabel:
+            text: "Game Hub"
+            halign: "center"
+            font_style: "H4"
+            theme_text_color: "Custom"
+            text_color: 1, 1, 1, 1
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        MDLabel:
+            text: "Choose your game and start playing"
+            halign: "center"
+            theme_text_color: "Custom"
+            text_color: 0.8, 0.8, 0.9, 1
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        ScrollView:
+            MDGridLayout:
+                id: games_grid
+                cols: 3
+                adaptive_height: True
+                spacing: "30dp"
+                padding: "20dp"
+
+
+<GameCard@MDCard>:
+    title: ""
+    desc: ""
+    icon: ""
+    game_name: ""
+    orientation: "vertical"
+    size_hint: None, None
+    size: "280dp", "340dp"
+    radius: [25]
+    elevation: 6
+    md_bg_color: 0.1, 0.12, 0.16, 1
+
+    MDBoxLayout:
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "15dp"
+
+        Image:
+            source: root.icon
+            allow_stretch: True
+            keep_ratio: True
+            size_hint_y: 0.55
+
+        MDLabel:
+            text: root.title
+            font_style: "H6"
+            theme_text_color: "Custom"
+            text_color: 1, 1, 1, 1
+            halign: "center"
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        MDLabel:
+            text: root.desc
+            font_style: "Caption"
+            theme_text_color: "Custom"
+            text_color: 0.8, 0.8, 0.9, 1
+            halign: "center"
+            size_hint_y: None
+            height: self.texture_size[1]
+
+        MDFillRoundFlatButton:
+            text: "Play Now"
+            md_bg_color: 0.25, 0.5, 0.9, 1
+            pos_hint: {"center_x": 0.5}
+            on_release: app.launch_game(root.game_name)
+<StatsScreen>:
+    name: "stats"
+    MDBoxLayout:
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "15dp"
+        md_bg_color: 0.05, 0.07, 0.1, 1
+
+        MDLabel:
+            text: "Game Stats"
+            halign: "center"
+            font_style: "H4"
+            theme_text_color: "Custom"
+            text_color: 1, 1, 1, 1
+
+        ScrollView:
+            MDGridLayout:
+                id: stats_grid
+                cols: 1
+                adaptive_height: True
+                spacing: "10dp"
+                padding: "10dp"
+
+        MDFillRoundFlatButton:
+            text: "Clear Stats"
+            md_bg_color: 0.7, 0.2, 0.2, 1
+            pos_hint: {"center_x": 0.5}
+            on_release: app.clear_stats()
+
+        MDFillRoundFlatButton:
+            text: "Back to Menu"
+            md_bg_color: 0.25, 0.5, 0.9, 1
+            pos_hint: {"center_x": 0.5}
+            on_release: app.switch_to("menu")

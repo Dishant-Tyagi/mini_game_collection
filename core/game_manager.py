@@ -1,32 +1,48 @@
 # =====================================
-# game_manager.py
+# game_manager.py — FINAL CLEAN VERSION
 # =====================================
 import os
+import sys
 import importlib.util
 import inspect
 from core.base_game import BaseGame
 
 
+# -----------------------------------------------------------
+# Resource Path (for .exe and dev mode)
+# -----------------------------------------------------------
+def resource_path(relative_path):
+    """
+    Returns absolute path to resource.
+    Works both in development and PyInstaller EXE.
+    """
+    try:
+        base_path = sys._MEIPASS  # PyInstaller temp folder
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+
+# -----------------------------------------------------------
+# Game Manager
+# -----------------------------------------------------------
 class GameManager:
-    """
-    Scans, loads, and manages all game modules under /games/.
-    Enables dynamic discovery of games without manual registration.
-    """
 
     def __init__(self, db, games_path="games"):
-        self.db = db
+        self.db = db          # ✅ THIS LINE IS MISSING IN YOUR FILE
         self.games_path = games_path
-        self.games = {}  # {game_name: class_ref}
+        self.games = {}
         self.load_games()
 
     # -----------------------------------------------------------
-    #  Game Discovery & Loading
+    # Scan and Load Games
     # -----------------------------------------------------------
     def load_games(self):
-        """Scans the games directory and imports all valid games."""
-        print("[GameManager] Scanning for games...")
+        print(f"[GameManager] Scanning games in: {self.games_path}")
+
         if not os.path.exists(self.games_path):
-            print(f"[GameManager] Directory '{self.games_path}' not found.")
+            print("[GameManager] Games folder not found.")
             return
 
         for folder in os.listdir(self.games_path):
@@ -34,39 +50,33 @@ class GameManager:
             game_file = os.path.join(folder_path, "game.py")
 
             if not os.path.isdir(folder_path) or not os.path.exists(game_file):
-                continue  # skip invalid entries
+                continue
 
             try:
-                # dynamic import
-                spec = importlib.util.spec_from_file_location(f"games.{folder}.game", game_file)
+                spec = importlib.util.spec_from_file_location(
+                    f"games.{folder}.game", game_file
+                )
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
 
-                # find classes inheriting from BaseGame
                 for name, obj in inspect.getmembers(module, inspect.isclass):
                     if issubclass(obj, BaseGame) and obj is not BaseGame:
                         self.games[folder] = obj
-                        print(f"[GameManager] Loaded game: {folder} ({name})")
+                        print(f"[GameManager] Loaded: {folder}")
 
             except Exception as e:
-                print(f"[GameManager] Error loading '{folder}': {e}")
+                print(f"[GameManager] Failed loading {folder}: {e}")
 
     # -----------------------------------------------------------
-    #  Access Methods
+    # Access Methods
     # -----------------------------------------------------------
     def get_game_list(self):
-        """Returns a list of discovered games."""
         return list(self.games.keys())
 
-    def launch_game(self, game_name):
-        """Creates a new instance of the selected game."""
-        if game_name not in self.games:
-            raise ValueError(f"Game '{game_name}' not found.")
-        game_class = self.games[game_name]
+    def launch_game(self, game_key):
+        if game_key not in self.games:
+            raise ValueError(f"Game not found: {game_key}")
+
+        game_class = self.games[game_key]
         return game_class(self.db)
 
-    def reload_games(self):
-        """Re-scan the games directory."""
-        self.games.clear()
-        self.load_games()
-        print("[GameManager] Game list reloaded.")

@@ -22,7 +22,7 @@ class Connect4Game(BaseGame):
         "O": (0.95, 0.9, 0.1, 1),   # yellow
     }
 
-    def __init__(self, db):
+    def __init__(self , db):
         super().__init__(db, "Connect4")
         self.board = [["" for _ in range(self.COLS)] for _ in range(self.ROWS)]
         self.current_player = "X"
@@ -32,7 +32,7 @@ class Connect4Game(BaseGame):
         self._popup = None
 
     # -----------------------------------------------------------
-    def start(self):
+    def start(self, app):
         from kivy.app import App
         app = App.get_running_app()
         self.begin_session()
